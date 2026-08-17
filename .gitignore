@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Model / LoRA weights -- never commit these, they're large and license-restricted
+*.safetensors
+*.ckpt
+*.pt
+*.pth
+*.bin
+*.gguf
+
+# Anything produced by the LoRA remap cache (redundant with *.safetensors above,
+# but explicit in case naming/extension conventions change)
+*_29Bremap.*
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+
+# Local test/output scratch space
+/output/
+/test_output/

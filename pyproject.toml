@@ -1,0 +1,19 @@
+[project]
+name = "comfyui-anima29b-remap"
+description = "Auto block-index remapping for applying old-Anima LoRAs and merging models with Anima-2.9B (28-to-40-block layer expansion)"
+version = "1.0.0"
+license = {file = "LICENSE"}
+
+classifiers = [
+    "Operating System :: OS Independent",
+    "Environment :: GPU :: NVIDIA CUDA",
+    "Environment :: GPU :: AMD ROCm",
+]
+
+[project.urls]
+Repository = "https://github.com/shin131002/ComfyUI-Anima29B-Remap"
+
+[tool.comfy]
+PublisherId = "konohana"
+DisplayName = "Anima-2.9B Remap"
+Icon = ""
