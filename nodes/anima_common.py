@@ -125,6 +125,39 @@ def build_base_to_target(manifest):
     return {base_idx: target_idx for base_idx, target_idx in enumerate(old_target_indices)}
 
 
+def build_source_to_inserted_targets(manifest):
+    """
+    Derive {base_block_idx: [inserted_target_idx, ...]} from expand_manifest.json's
+    "inserted_to_source" (which maps each newly-inserted TARGET index to the BASE
+    index it was deep-copied from at initialization). Used for the experimental
+    "extend to new layers" feature: applying a base layer's LoRA delta onto the
+    new layer(s) that were originally copied from it.
+    """
+    if manifest is None:
+        return {}
+    inserted_to_source = manifest.get("inserted_to_source", {})
+    result = {}
+    for target_idx_str, base_idx in inserted_to_source.items():
+        result.setdefault(int(base_idx), []).append(int(target_idx_str))
+    return result
+
+
+def remap_key_to_target(key, target_idx):
+    """
+    Force-rewrite a key's MAIN block index to `target_idx`, regardless of what
+    index it currently has. Used to project an already-remapped base layer's
+    tensor onto a newly-inserted layer. Returns None for llm_adapter keys or
+    keys with no block index at all.
+    """
+    if _is_llm_adapter_key(key):
+        return None
+    for pat in BLOCK_PATTERNS:
+        m = pat.search(key)
+        if m:
+            return key[: m.start()] + m.group(1) + str(target_idx) + m.group(3) + key[m.end():]
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Model block-count detection
 # ---------------------------------------------------------------------------

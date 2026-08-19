@@ -43,9 +43,11 @@ from safetensors.torch import save_file as st_save_file
 from .anima_common import (
     find_block_indices,
     remap_key,
+    remap_key_to_target,
     list_available_manifests,
     load_manifest,
     build_base_to_target,
+    build_source_to_inserted_targets,
     get_model_block_count,
 )
 
@@ -135,6 +137,13 @@ class AnimaLoRARemapTagLoader:
     the bundled expand_manifest.json before applying it. Old-Anima LoRAs
     used on old-Anima models, or LoRAs already trained on Anima-2.9B, pass
     through unchanged.
+
+    Experimental: when extend_to_new_layers is enabled, the LoRA's effect is
+    also projected onto Anima-2.9B's newly-inserted layers, by copying each
+    inserted layer's nearest-neighbor source layer's (already-remapped) delta
+    onto it, scaled by extend_strength. There is no "correct" answer for what
+    a pre-2.9B LoRA should do on layers that didn't exist when it was
+    trained -- this is a best-effort approximation, off by default.
     """
 
     @classmethod
@@ -147,7 +156,9 @@ class AnimaLoRARemapTagLoader:
                 "default_weight": ("FLOAT", {"default": 1.0, "min": -10.0, "max": 10.0, "step": 0.05}),
                 "weight_multiplier": ("FLOAT", {"default": 1.0, "min": -10.0, "max": 10.0, "step": 0.05}),
                 "auto_remap": ("BOOLEAN", {"default": True}),
-                "save_remapped": ("BOOLEAN", {"default": True}),
+                "save_remapped": ("BOOLEAN", {"default": False}),
+                "extend_to_new_layers": ("BOOLEAN", {"default": False}),
+                "extend_strength": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 2.0, "step": 0.05}),
                 "manifest": (manifests,),
             },
             "optional": {
@@ -160,11 +171,13 @@ class AnimaLoRARemapTagLoader:
     FUNCTION = "load"
     CATEGORY = "loaders/anima"
 
-    def load(self, model, text, default_weight, weight_multiplier, auto_remap, save_remapped, manifest, clip=None):
+    def load(self, model, text, default_weight, weight_multiplier, auto_remap, save_remapped,
+              extend_to_new_layers, extend_strength, manifest, clip=None):
         tags, stripped_text = parse_lora_tags(text, default_weight)
 
         manifest_data = load_manifest(manifest) if auto_remap else None
         base_to_target = build_base_to_target(manifest_data) if manifest_data else {}
+        source_to_inserted = build_source_to_inserted_targets(manifest_data) if manifest_data else {}
         old_block_count = manifest_data.get("old_block_count") if manifest_data else None
 
         out_model = model
@@ -195,6 +208,13 @@ class AnimaLoRARemapTagLoader:
                 if cached_path is not None:
                     lora_sd = comfy.utils.load_torch_file(cached_path, safe_load=True)
                     logger.info(f"'{name}': using cached remap file {os.path.basename(cached_path)}")
+                    logger.info(
+                        f"'{name}': NOTE -- this cache reflects whatever extend_to_new_layers/"
+                        f"extend_strength were set to when it was SAVED, not the current node "
+                        f"settings (extend_to_new_layers={extend_to_new_layers}, "
+                        f"extend_strength={extend_strength}). Delete "
+                        f"{os.path.basename(cached_path)} and re-run if you've changed these."
+                    )
                 else:
                     lora_sd = comfy.utils.load_torch_file(original_path, safe_load=True)
                     lora_indices = find_block_indices(lora_sd.keys())
@@ -218,6 +238,28 @@ class AnimaLoRARemapTagLoader:
                             f"({len(remapped)} tensors kept, {dropped} dropped as "
                             f"newly-inserted layers with no old counterpart)"
                         )
+
+                        if extend_to_new_layers and source_to_inserted:
+                            extended = 0
+                            for k, v in lora_sd.items():
+                                _, base_idx = remap_key(k, base_to_target)
+                                if base_idx is None:
+                                    continue
+                                target_list = source_to_inserted.get(base_idx)
+                                if not target_list:
+                                    continue
+                                for t_idx in target_list:
+                                    new_k = remap_key_to_target(k, t_idx)
+                                    if new_k is None:
+                                        continue
+                                    remapped[new_k] = v * extend_strength
+                                    extended += 1
+                            logger.info(
+                                f"'{name}': [experimental] extended {extended} tensors onto "
+                                f"newly-inserted layers via nearest-neighbor copy "
+                                f"(strength={extend_strength})"
+                            )
+
                         lora_sd = remapped
 
                         if save_remapped:

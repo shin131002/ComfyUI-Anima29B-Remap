@@ -63,7 +63,9 @@ A LoRA loader with the same `<lora:name:weight>` tag syntax used by LoRA Tag Pow
 | `default_weight` | FLOAT | Default weight used when a tag omits it |
 | `weight_multiplier` | FLOAT | A multiplier applied uniformly to every LoRA's weight |
 | `auto_remap` | BOOLEAN | When ON, enables the auto-remap mechanism (default: ON) |
-| `save_remapped` | BOOLEAN | When ON, **saves the remapped LoRA to disk as a file** whenever a fresh remap is performed (default: ON — see details below) |
+| `save_remapped` | BOOLEAN | When ON, **saves the remapped LoRA to disk as a file** whenever a fresh remap is performed (default: OFF — see details and a caution below) |
+| `extend_to_new_layers` | BOOLEAN | **Experimental.** When ON, also applies an approximation of the LoRA's effect onto the 12 newly-inserted layers (default: OFF) |
+| `extend_strength` | FLOAT | Strength used for `extend_to_new_layers` (multiplies together with the tag's own weight) |
 | `manifest` | dropdown | Selects which version of `expand_manifest.json` to use |
 
 ### Outputs
@@ -93,6 +95,16 @@ You can also specify the CLIP weight separately with `<lora:name:model_weight:cl
 
 `save_remapped` is a toggle that controls **whether the remapped LoRA gets saved to disk as a file**. Saving it lets subsequent runs skip the remapping step entirely and just load the saved file directly.
 
+> ⚠️ **Caution: while you're still tuning `extend_strength` or `extend_to_new_layers`, we strongly recommend keeping `save_remapped` OFF.**
+>
+> Once a cache file (`_29Bremap`) has been saved even once, **any later changes to `extend_to_new_layers` or `extend_strength` will have no effect at all**. As long as the cache file exists, its contents — baked in at whatever settings were active the moment it was saved — will keep being loaded and take priority over your current node settings.
+>
+> The recommended workflow is:
+>
+> 1. Keep `save_remapped` **OFF** while you experiment with `extend_to_new_layers` / `extend_strength` to find settings you like (during this phase, the LoRA is remapped fresh on every run and nothing is written to disk)
+> 2. Once you've settled on values, turn `save_remapped` **ON** for a single run to write out the final cache file
+> 3. If you want to try different settings again later, delete the generated `_29Bremap` file first, then go back to step 1
+
 This is the full sequence of events (which only occurs when the connected model has 40 blocks — i.e. is Anima-2.9B-family — and the LoRA is determined to need remapping):
 
 1. **First, check whether a file named `<original LoRA name>_29Bremap.<extension>` already exists**, using the same lookup method as for the original LoRA (including subfolders)
@@ -119,6 +131,7 @@ Merges two Anima models (MODEL), automatically reconciling any difference in blo
 | `model_1` | MODEL | First model to merge (top slot) |
 | `model_2` | MODEL | Second model to merge (bottom slot) |
 | `merge_ratio` | FLOAT (0.0–1.0) | Blend weight for `model_1` |
+| `extend_ratio` | FLOAT (0.0–1.0) | **Experimental.** How much of the corresponding old-model layer to blend into the 12 newly-inserted blocks (default: 0.0 — new layers stay 100% the 2.9B side's own values, as before) |
 | `manifest` | dropdown | Selects which version of `expand_manifest.json` to use |
 
 ### Outputs
@@ -139,7 +152,21 @@ Merges two Anima models (MODEL), automatically reconciling any difference in blo
 |---|---|
 | Both models have 28 blocks (both original-Anima derivatives) | Direct merge at 28 blocks (no remap needed) |
 | Both models have 40 blocks (both Anima-2.9B derivatives) | Direct merge at 40 blocks (no remap needed) |
-| One has 40 blocks, the other has 28 | **Output is always 40 blocks.** The 28-block model's weights are remapped and blended in at the old (shared) block positions according to `merge_ratio`. The 12 newly-inserted blocks always keep the 40-block model's own values — regardless of whether that model is plugged into `model_1` or `model_2` — and are unaffected by `merge_ratio` |
+| One has 40 blocks, the other has 28 | **Output is always 40 blocks.** The 28-block model's weights are remapped and blended in at the old (shared) block positions according to `merge_ratio`. By default, the 12 newly-inserted blocks always keep the 40-block model's own values — regardless of whether that model is plugged into `model_1` or `model_2` — and are unaffected by `merge_ratio` (this can be changed with `extend_ratio`, see below) |
+
+### About `extend_ratio` (extending to the new 12 layers, experimental)
+
+By default (`extend_ratio = 0.0`), the 12 newly-inserted blocks always keep the 40-block model's (Anima-2.9B-family) own values, unaffected by `merge_ratio` or the 28-block model at all.
+
+Setting `extend_ratio` above 0 uses `expand_manifest.json`'s `inserted_to_source` (which records which base block each new block was originally copied from at initialization) to blend in the 28-block model's corresponding (remapped) source layer:
+
+```
+final new-layer value = (1 - extend_ratio) * 2.9B model's own value + extend_ratio * the 28-block model's corresponding source layer
+```
+
+At `extend_ratio = 1.0`, the new layers are fully replaced by the 28-block model's (approximated) values as well. This follows the same idea as the LoRA node's `extend_to_new_layers` / `extend_strength`, but is an independent feature — and, just like there, it's a best-effort approximation with no "correct" answer.
+
+Since this node has no built-in save function (see below), it doesn't have the same "settings silently stop applying once cached" caveat that the LoRA node's `save_remapped` does — saving a merge result always requires explicitly running the `ModelSave` node, so there's no risk of unknowingly reusing a file baked with outdated settings.
 
 ### Bypass behavior
 

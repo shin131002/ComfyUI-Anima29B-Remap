@@ -17,12 +17,21 @@ Architecture handling:
       same block count.
     - If block counts DIFFER (one 28-block, one 40-block): the output is
       always the 40-block architecture. The 40-block model supplies the
-      base (so its 12 newly-inserted blocks -- which have no counterpart
-      in a 28-block model -- are preserved untouched, at 100% their
-      original value, regardless of merge_ratio). The 28-block model's
-      weights are remapped onto their corresponding 40-block indices
-      (via the bundled expand_manifest.json) and blended in at the old
-      (shared) block positions according to merge_ratio.
+      base. The 28-block model's weights are remapped onto their
+      corresponding 40-block indices (via the bundled expand_manifest.json)
+      and blended in at the old (shared) block positions according to
+      merge_ratio.
+
+      The 12 newly-inserted blocks have no counterpart in a 28-block
+      model, so by default (extend_ratio=0.0) they are preserved
+      untouched at 100% their 40-block value, regardless of merge_ratio.
+      Setting extend_ratio > 0.0 additionally blends in the 28-block
+      model's weight from whichever original block each inserted block
+      was copied from at initialization (expand_manifest.json's
+      "inserted_to_source"): new_layer = (1 - extend_ratio) * 2.9B's own
+      value + extend_ratio * the 28-block model's corresponding source
+      layer. There's no "correct" answer for this -- it's an experimental,
+      best-effort approximation, off by default.
 
 Bypassing the node (ComfyUI's Mode: Bypass) falls back to ComfyUI's
 default behavior for a two-MODEL-input / one-MODEL-output node: the
@@ -34,9 +43,11 @@ import logging
 
 from .anima_common import (
     remap_key,
+    remap_key_to_target,
     list_available_manifests,
     load_manifest,
     build_base_to_target,
+    build_source_to_inserted_targets,
     get_model_block_count,
 )
 
@@ -56,6 +67,29 @@ def remap_key_patches(key_patches, base_to_target):
     return remapped, dropped
 
 
+def build_extended_patches(old_key_patches, source_to_inserted):
+    """
+    Project the 28-block model's own weights onto the 12 newly-inserted
+    target positions, using expand_manifest.json's record of which base
+    block each inserted block was originally copied from. Used for the
+    experimental extend_ratio feature.
+    """
+    extended = {}
+    for k, v in old_key_patches.items():
+        _, base_idx = remap_key(k, {})  # empty map: just extracts base_idx, ignores match result
+        if base_idx is None:
+            continue
+        target_list = source_to_inserted.get(base_idx)
+        if not target_list:
+            continue
+        for t_idx in target_list:
+            new_k = remap_key_to_target(k, t_idx)
+            if new_k is None:
+                continue
+            extended[new_k] = v
+    return extended
+
+
 class AnimaModelMerge:
     """
     Merge two Anima models (MODEL) with merge_ratio as the weight of
@@ -73,6 +107,7 @@ class AnimaModelMerge:
                 "model_1": ("MODEL",),
                 "model_2": ("MODEL",),
                 "merge_ratio": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.01}),
+                "extend_ratio": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.05}),
                 "manifest": (manifests,),
             },
         }
@@ -82,9 +117,10 @@ class AnimaModelMerge:
     FUNCTION = "merge"
     CATEGORY = "loaders/anima"
 
-    def merge(self, model_1, model_2, merge_ratio, manifest):
+    def merge(self, model_1, model_2, merge_ratio, extend_ratio, manifest):
         manifest_data = load_manifest(manifest)
         base_to_target = build_base_to_target(manifest_data) if manifest_data else {}
+        source_to_inserted = build_source_to_inserted_targets(manifest_data) if manifest_data else {}
         old_block_count = manifest_data.get("old_block_count") if manifest_data else None
         new_block_count = manifest_data.get("new_block_count") if manifest_data else None
 
@@ -107,7 +143,7 @@ class AnimaModelMerge:
         is_2_old = old_block_count is not None and block_count_2 == old_block_count
 
         if is_1_expanded and is_2_old and base_to_target:
-            # model_1 (40-block) is the base -> its new 12 blocks are preserved untouched.
+            # model_1 (40-block) is the base -> its new 12 blocks default to untouched.
             m = model_1.clone()
             kp2 = model_2.get_key_patches("diffusion_model.")
             remapped_kp2, dropped = remap_key_patches(kp2, base_to_target)
@@ -117,10 +153,17 @@ class AnimaModelMerge:
                 f"({dropped} dropped), blended at old-block positions, ratio={merge_ratio} "
                 f"(model_1 weight). Output: 40 blocks."
             )
+            if extend_ratio > 0.0 and source_to_inserted:
+                extended = build_extended_patches(kp2, source_to_inserted)
+                m.add_patches(extended, extend_ratio, 1.0 - extend_ratio)
+                logger.info(
+                    f"[experimental] extended {len(extended)} tensors from model_2 (old) onto "
+                    f"newly-inserted layers, extend_ratio={extend_ratio}"
+                )
             return (m,)
 
         if is_2_expanded and is_1_old and base_to_target:
-            # model_2 (40-block) is the base -> its new 12 blocks are preserved untouched.
+            # model_2 (40-block) is the base -> its new 12 blocks default to untouched.
             # merge_ratio still means "weight of model_1", so strengths are swapped
             # relative to the case above.
             m = model_2.clone()
@@ -132,6 +175,13 @@ class AnimaModelMerge:
                 f"({dropped} dropped), blended at old-block positions, ratio={merge_ratio} "
                 f"(model_1 weight). Output: 40 blocks."
             )
+            if extend_ratio > 0.0 and source_to_inserted:
+                extended = build_extended_patches(kp1, source_to_inserted)
+                m.add_patches(extended, extend_ratio, 1.0 - extend_ratio)
+                logger.info(
+                    f"[experimental] extended {len(extended)} tensors from model_1 (old) onto "
+                    f"newly-inserted layers, extend_ratio={extend_ratio}"
+                )
             return (m,)
 
         # --- Fallback: unexpected/unrecognized block counts -> best-effort direct merge ---
