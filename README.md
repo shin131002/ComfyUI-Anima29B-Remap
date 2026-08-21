@@ -51,6 +51,11 @@ After restarting, search for "Anima" in the node search (double-click the canvas
 - **Anima LoRA Tag Loader Extended (Experimental)** — experimental, see below
 - **Anima Model Merge Extended (Experimental)** — experimental, see below
 
+![Node 1: Anima LoRA Tag Loader (Auto Remap)](./images/01.jpg)
+![Node 2: Anima Model Merge (Auto Remap)](./images/02.jpg)
+![Node 3: Anima LoRA Tag Loader Extended (Experimental)](./images/03.jpg)
+![Node 4: Anima Model Merge Extended (Experimental)](./images/04.jpg)
+
 ---
 
 ## Node 1: Anima LoRA Tag Loader (Auto Remap)
