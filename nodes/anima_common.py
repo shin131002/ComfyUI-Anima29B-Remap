@@ -142,6 +142,55 @@ def build_source_to_inserted_targets(manifest):
     return result
 
 
+def split_block_key(key):
+    """
+    Split a MAIN-block key into (prefix, base_idx, suffix, sep):
+      prefix: everything up to and including e.g. "net.blocks."
+      base_idx: the block index found in the key
+      sep: the separator right after the index (e.g. "." or "_")
+      suffix: everything after that separator (e.g. "self_attn.q_proj.lora_down.weight")
+    Returns None for llm_adapter keys or keys with no block index at all.
+    """
+    if _is_llm_adapter_key(key):
+        return None
+    for pat in BLOCK_PATTERNS:
+        m = pat.search(key)
+        if m:
+            prefix = key[: m.start()] + m.group(1)
+            base_idx = int(m.group(2))
+            sep = m.group(3)
+            suffix = key[m.end():]
+            return prefix, base_idx, suffix, sep
+    return None
+
+
+def build_insertion_neighbors(manifest):
+    """
+    For each newly-inserted target index, find the nearest OLD (non-inserted)
+    block on each side, as BASE indices: {target_idx: (prev_base_idx, next_base_idx)}.
+    Either side may be None near the ends of the network. The "prev" side always
+    matches expand_manifest.json's "inserted_to_source" (confirmed by direct
+    comparison) since the inserted layer was deep-copied from its immediate
+    predecessor at initialization; "next" is the analogous lookup in the other
+    direction, which the manifest does not record directly.
+    """
+    if manifest is None:
+        return {}
+    new_count = manifest["new_block_count"]
+    inserted = set(manifest["insertion_positions"])
+    old_target_indices = sorted(i for i in range(new_count) if i not in inserted)
+    target_to_base = {t: b for b, t in enumerate(old_target_indices)}
+
+    neighbors = {}
+    for t_idx in sorted(inserted):
+        prev_target = max((t for t in old_target_indices if t < t_idx), default=None)
+        next_target = min((t for t in old_target_indices if t > t_idx), default=None)
+        prev_base = target_to_base.get(prev_target) if prev_target is not None else None
+        next_base = target_to_base.get(next_target) if next_target is not None else None
+        neighbors[t_idx] = (prev_base, next_base)
+    return neighbors
+
+
 def remap_key_to_target(key, target_idx):
     """
     Force-rewrite a key's MAIN block index to `target_idx`, regardless of what

@@ -24,7 +24,9 @@ ComfyUI-Anima29B-Remap/
     ├── __init__.py                          # (empty, makes this a proper package)
     ├── anima_common.py                      # Shared logic (block detection, mapping computation)
     ├── lora_remap_anima.py                  # LoRA tag loader (auto remap)
-    └── model_merge_anima.py                 # Model merge (auto remap)
+    ├── lora_remap_extended_anima.py         # LoRA tag loader, extended (experimental, front/back blend)
+    ├── model_merge_anima.py                 # Model merge (auto remap)
+    └── model_merge_extended_anima.py        # Model merge, extended (experimental, front/back blend)
 ```
 
 ## Installation
@@ -42,10 +44,12 @@ cd ComfyUI/custom_nodes/
 git clone https://github.com/shin131002/ComfyUI-Anima29B-Remap.git
 ```
 
-After restarting, search for "Anima" in the node search (double-click the canvas) and you'll find two nodes:
+After restarting, search for "Anima" in the node search (double-click the canvas) and you'll find these nodes:
 
 - **Anima LoRA Tag Loader (Auto Remap)**
 - **Anima Model Merge (Auto Remap)**
+- **Anima LoRA Tag Loader Extended (Experimental)** — experimental, see below
+- **Anima Model Merge Extended (Experimental)** — experimental, see below
 
 ---
 
@@ -181,6 +185,35 @@ This node has no built-in save functionality. To save the merge result, connect 
 ```
 
 `ModelSave` only saves the UNet (diffusion model) portion — CLIP and VAE are not included. By default it saves under `ComfyUI/output`, so move the file to somewhere like `models/diffusion_models` if you want to use it for generation.
+
+---
+
+## Nodes 3 & 4: the Extended (Experimental) variants
+
+`Anima LoRA Tag Loader Extended (Experimental)` and `Anima Model Merge Extended (Experimental)` are **separate files and separate nodes**, added without changing the regular nodes (1 & 2) at all. The regular nodes keep working exactly as before.
+
+### What's extended
+
+The regular nodes' `extend_to_new_layers` / `extend_strength` (LoRA) and `extend_ratio` (model merge) only used the single "preceding old layer" recorded in `expand_manifest.json`'s `inserted_to_source` when projecting onto the 12 newly-inserted layers.
+
+The Extended variants generalize this into **blending both the preceding ("front") and following ("back") old layers**, at a ratio you choose:
+
+- **LoRA Extended**: adds `blend_ratio` (0.0–1.0). The front layer's weight is `blend_ratio`, the back layer's weight is `1 - blend_ratio`.
+- **Model Merge Extended**: adds the same `blend_ratio`, used together with the existing `extend_ratio` (`extend_ratio` still controls the mix between "the 2.9B model's own value" and "the blended old-model value"; `blend_ratio` now controls how that blended old-model value itself is built from the front vs. back layer).
+
+```
+value applied to the new layer = front (preceding) layer's value * blend_ratio + back (following) layer's value * (1 - blend_ratio)
+```
+
+**At `blend_ratio = 1.0`, the back layer's contribution is zero, so the result is numerically identical to the regular nodes (1 & 2)** (verified). Lowering `blend_ratio` progressively mixes in the following layer's influence.
+
+### About the cache file
+
+The LoRA Extended node's cache file uses a **different suffix (`_29Bremap_ext`)** from the regular node's, so they never collide or overwrite each other. As with the regular node, we recommend keeping `save_remapped` OFF while you're still experimenting with `extend_to_new_layers` / `blend_ratio` / `extend_strength` (the same caveat applies here).
+
+### When to use these
+
+These are purely for experimentation. Reach for them if you want finer control over how the effect is projected onto the new layers — if the regular nodes already give you what you want, there's no need to switch.
 
 ---
 

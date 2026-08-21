@@ -24,7 +24,9 @@ ComfyUI-Anima29B-Remap/
     ├── __init__.py                          # (空、パッケージ化のため)
     ├── anima_common.py                      # 共通ロジック(層検出・マッピング計算)
     ├── lora_remap_anima.py                  # LoRAタグローダー(自動リマップ)
-    └── model_merge_anima.py                 # モデルマージ(自動リマップ)
+    ├── lora_remap_extended_anima.py         # LoRAタグローダー拡張版(実験的、前後ブレンド)
+    ├── model_merge_anima.py                 # モデルマージ(自動リマップ)
+    └── model_merge_extended_anima.py        # モデルマージ拡張版(実験的、前後ブレンド)
 ```
 
 ## インストール
@@ -42,10 +44,12 @@ cd ComfyUI/custom_nodes/
 git clone https://github.com/shin131002/ComfyUI-Anima29B-Remap.git
 ```
 
-再起動後、ノード検索(ダブルクリック)で「Anima」と入力すると、以下の2ノードが見つかります。
+再起動後、ノード検索(ダブルクリック)で「Anima」と入力すると、以下のノードが見つかります。
 
 - **Anima LoRA Tag Loader (Auto Remap)**
 - **Anima Model Merge (Auto Remap)**
+- **Anima LoRA Tag Loader Extended (Experimental)** — 実験的機能。詳細は後述
+- **Anima Model Merge Extended (Experimental)** — 実験的機能。詳細は後述
 
 ---
 
@@ -181,6 +185,35 @@ git clone https://github.com/shin131002/ComfyUI-Anima29B-Remap.git
 ```
 
 `ModelSave`はUNet(拡散モデル)部分のみを保存します(CLIP/VAEは含まれません)。保存先はデフォルトで`ComfyUI/output`配下になるため、生成用に使う場合は`models/diffusion_models`等へ移動してください。
+
+---
+
+## ノード3・4: Extended (Experimental)版について
+
+`Anima LoRA Tag Loader Extended (Experimental)`と`Anima Model Merge Extended (Experimental)`は、通常版のノード(ノード1・2)を一切変更せず、**別ファイル・別ノードとして追加した実験的なバリエーション**です。通常版はこれまで通りの動作のまま安心して使い続けられます。
+
+### 何が拡張されているか
+
+通常版の`extend_to_new_layers`/`extend_strength`(LoRA)や`extend_ratio`(モデルマージ)は、新規12層への適用時、`expand_manifest.json`の`inserted_to_source`が示す**「直前の旧層」のみ**を情報源としていました。
+
+Extended版では、これを**「直前(前側)」と「直後(後ろ側)」の両方の旧層を、指定した比率でブレンドする**形に一般化しています。
+
+- **LoRA Extended**: `blend_ratio`(0.0〜1.0)を追加。前側の重みが`blend_ratio`、後ろ側の重みが`1 - blend_ratio`
+- **Model Merge Extended**: 同じく`blend_ratio`を追加。既存の`extend_ratio`と組み合わせて使います(`extend_ratio`が「2.9B自身の値」と「旧モデル由来のブレンド値」の混合比率、`blend_ratio`がその「旧モデル由来のブレンド値」自体を前後どちらの層から作るかの比率)
+
+```
+新規層への適用値 = 前側(直前の旧層)の値 × blend_ratio + 後側(直後の旧層)の値 × (1 - blend_ratio)
+```
+
+**`blend_ratio = 1.0`のとき、後側の寄与が0になるため、通常版(ノード1・2)と数値まで完全に同じ結果になります**(テスト済み)。`blend_ratio`を下げていくと、徐々に「直後の層」の影響が混ざっていきます。
+
+### キャッシュファイルについて
+
+LoRA Extended版のキャッシュファイルは、通常版と混同しないよう**別のサフィックス(`_29Bremap_ext`)**で保存されます。通常版のキャッシュ(`_29Bremap`)とは独立しているため、互いに上書きし合うことはありません。ただし、通常版と同様、`extend_to_new_layers`/`blend_ratio`/`extend_strength`を変更しながら検討する間は`save_remapped`をOFFのままにしておくことを推奨します(注意点は通常版と同じです)。
+
+### 位置づけ
+
+あくまで実験目的の追加ノードです。「新規層への適用方法をもう少し細かく制御したい」と感じた時に使うもので、通常版だけで十分な場合は無理に使う必要はありません。
 
 ---
 
