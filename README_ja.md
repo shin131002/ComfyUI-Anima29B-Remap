@@ -52,8 +52,11 @@ git clone https://github.com/shin131002/ComfyUI-Anima29B-Remap.git
 - **Anima Model Merge Extended (Experimental)** — 実験的機能。詳細は後述
 
 ![ノード1: Anima LoRA Tag Loader (Auto Remap)](./images/01.jpg)
+
 ![ノード2: Anima Model Merge (Auto Remap)](./images/02.jpg)
+
 ![ノード3: Anima LoRA Tag Loader Extended (Experimental)](./images/03.jpg)
+
 ![ノード4: Anima Model Merge Extended (Experimental)](./images/04.jpg)
 
 ---
